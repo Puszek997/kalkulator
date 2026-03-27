@@ -13,9 +13,7 @@
 #include <type_traits>
 #include <vector>
 
-
 #define ID_COMBO_TYPE 40100
-#define ID_COMBO_BASE 40101
 #define ID_BTN_A 41000
 #define ID_BTN_B 41001
 #define ID_BTN_C 41002
@@ -112,8 +110,8 @@ struct ProgrammerState {
     wchar_t pending_op = 0;
     bool reset_input = false, just_evaluated = false, has_exact_input = false;
     int hovered_bit = -1;
-    HWND hTypeCombo = nullptr, hBaseCombo = nullptr, hBitDisplay = nullptr;
-    std::wstring history, exact_input, precision_warning, tooltip_text;
+    HWND hTypeCombo = nullptr, hBitDisplay = nullptr;
+    std::wstring history, exact_input, precision_warning;
 };
 struct AppConfig {
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT, w = 900, h = 700;
@@ -170,11 +168,6 @@ HWND find_button(int id) {
         if (b.id == id)
             return b.hwnd;
     return nullptr;
-}
-std::wstring trim(const std::wstring &s) {
-    auto a = s.find_first_not_of(L" \t\r\n"),
-         b = s.find_last_not_of(L" \t\r\n");
-    return a == std::wstring::npos ? L"" : s.substr(a, b - a + 1);
 }
 
 std::wstring group_digits_every_four(std::wstring s) {
@@ -529,7 +522,6 @@ void clear_programmer_state() {
     g_programmer.hovered_bit = -1;
     g_programmer.exact_input.clear();
     g_programmer.precision_warning.clear();
-    g_programmer.tooltip_text.clear();
 }
 void clear_all() {
     (g_mode == AppMode::Basic ? clear_basic_state : clear_programmer_state)();
@@ -908,7 +900,6 @@ void set_programmer_base(NumberBase b) {
     commit_exact_programmer_input(false);
     g_programmer.base = b;
     clear_programmer_exact_input();
-    SendMessageW(g_programmer.hBaseCombo, CB_SETCURSEL, idx(b), 0);
     update_buttons_enabled();
     update_menu_checks();
     sync_programmer_display_from_state();
@@ -1030,7 +1021,6 @@ void set_mode(AppMode m) {
     g_mode = m;
     ShowWindow(g_programmer.hTypeCombo,
                g_mode == AppMode::Programmer ? SW_SHOW : SW_HIDE);
-    ShowWindow(g_programmer.hBaseCombo, SW_HIDE);
     ShowWindow(g_programmer.hBitDisplay,
                g_mode == AppMode::Programmer ? SW_SHOW : SW_HIDE);
     update_buttons_enabled();
@@ -1083,33 +1073,6 @@ BitBoxLayout get_bit_layout(const RECT &rc) {
     return l;
 }
 
-std::wstring tooltip_for_bit(int bit) {
-    int bits = bit_width(g_programmer.type);
-    if (bit < 0 || bit >= bits)
-        return L"";
-    if (is_float_type(g_programmer.type)) {
-        const TypeMeta &type_info = meta(g_programmer.type);
-        int eb = type_info.exp, mb = type_info.mant, sign = bits - 1;
-        if (bit == sign)
-            return L"Sign bit";
-        if (bit >= mb && bit <= mb + eb - 1) {
-            std::wostringstream os;
-            os << L"Exponent bit: 2^" << (bit - mb) << L" (Bias: "
-               << type_info.bias << L")";
-            return os.str();
-        }
-        std::wostringstream os;
-        os << L"Mantissa bit: 2^" << (bit - mb);
-        return os.str();
-    }
-    std::wostringstream os;
-    if (is_signed_integer_type(g_programmer.type) && bit == bits - 1)
-        os << L"Sign bit: -2^" << bits - 1;
-    else
-        os << L"Bit " << bit << L": 2^" << bit;
-    return os.str();
-}
-
 int hit_test_bit(HWND hwnd, int x, int y) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
@@ -1124,26 +1087,6 @@ int hit_test_bit(HWND hwnd, int x, int y) {
             return l.bitCount - 1 - v;
     }
     return -1;
-}
-
-void update_bit_tooltip(HWND hwnd, int bit, POINT ptClient) {
-    HWND tt = reinterpret_cast<HWND>(GetPropW(hwnd, L"BIT_TOOLTIP"));
-    if (!tt)
-        return;
-    TOOLINFOW ti{sizeof(ti)};
-    ti.uFlags = TTF_TRACK | TTF_ABSOLUTE | TTF_IDISHWND;
-    ti.hwnd = hwnd;
-    ti.uId = reinterpret_cast<UINT_PTR>(hwnd);
-    if (bit < 0)
-        return (void)SendMessageW(tt, TTM_TRACKACTIVATE, FALSE,
-                                  reinterpret_cast<LPARAM>(&ti));
-    g_programmer.tooltip_text = tooltip_for_bit(bit);
-    ti.lpszText = const_cast<wchar_t *>(g_programmer.tooltip_text.c_str());
-    SendMessageW(tt, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&ti));
-    ClientToScreen(hwnd, &ptClient);
-    SendMessageW(tt, TTM_TRACKPOSITION, 0,
-                 MAKELPARAM(ptClient.x + 14, ptClient.y + 24));
-    SendMessageW(tt, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&ti));
 }
 
 void hide_all_buttons() {
@@ -1183,7 +1126,6 @@ void layout_children(HWND hwnd) {
         hide_all_buttons();
         layout_basic_grid_buttons(top, rowH, colW, contentW, pad);
         ShowWindow(g_programmer.hTypeCombo, SW_HIDE);
-        ShowWindow(g_programmer.hBaseCombo, SW_HIDE);
         ShowWindow(g_programmer.hBitDisplay, SW_HIDE);
         update_buttons_enabled();
         return;
@@ -1192,7 +1134,6 @@ void layout_children(HWND hwnd) {
         bitH = std::max(72, h / 5);
     MoveWindow(g_display_handle, pad, pad, contentW, dispH, TRUE);
     MoveWindow(g_programmer.hTypeCombo, pad, comboTop, contentW, 260, TRUE);
-    ShowWindow(g_programmer.hBaseCombo, SW_HIDE);
     MoveWindow(g_programmer.hBitDisplay, pad, comboTop + 28 + pad, contentW,
                bitH, TRUE);
     int buttonsTop = comboTop + 28 + pad + bitH + pad,
@@ -1356,21 +1297,6 @@ LRESULT CALLBACK display_window_proc(HWND hwnd, UINT msg, WPARAM wp,
 
 LRESULT CALLBACK bit_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-    case WM_CREATE: {
-        HWND tt =
-            CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
-                            WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
-                            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                            CW_USEDEFAULT, hwnd, nullptr, g_instance, nullptr);
-        TOOLINFOW ti{sizeof(ti)};
-        ti.uFlags = TTF_TRACK | TTF_ABSOLUTE | TTF_IDISHWND;
-        ti.hwnd = hwnd;
-        ti.uId = reinterpret_cast<UINT_PTR>(hwnd);
-        ti.lpszText = const_cast<wchar_t *>(L"");
-        SendMessageW(tt, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
-        SetPropW(hwnd, L"BIT_TOOLTIP", tt);
-        return 0;
-    }
     case WM_MOUSEMOVE: {
         TRACKMOUSEEVENT t{sizeof(t), TME_LEAVE, hwnd, 0};
         TrackMouseEvent(&t);
@@ -1378,14 +1304,12 @@ LRESULT CALLBACK bit_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         int bit = hit_test_bit(hwnd, pt.x, pt.y);
         if (bit != g_programmer.hovered_bit) {
             g_programmer.hovered_bit = bit;
-            update_bit_tooltip(hwnd, bit, pt);
             InvalidateRect(hwnd, nullptr, TRUE);
         }
         return 0;
     }
     case WM_MOUSELEAVE:
         g_programmer.hovered_bit = -1;
-        update_bit_tooltip(hwnd, -1, {});
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     case WM_LBUTTONDOWN:
@@ -1453,10 +1377,6 @@ LRESULT CALLBACK bit_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         EndPaint(hwnd, &ps);
         return 0;
     }
-    case WM_DESTROY:
-        if (HWND tt = reinterpret_cast<HWND>(GetPropW(hwnd, L"BIT_TOOLTIP")))
-            DestroyWindow(tt), RemovePropW(hwnd, L"BIT_TOOLTIP");
-        return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -1473,11 +1393,6 @@ LRESULT CALLBACK calc_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
             0, 0, 100, 300, hwnd, reinterpret_cast<HMENU>(ID_COMBO_TYPE),
             g_instance, nullptr);
-        g_programmer.hBaseCombo = CreateWindowExW(
-            0, WC_COMBOBOXW, nullptr,
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
-            0, 0, 100, 200, hwnd, reinterpret_cast<HMENU>(ID_COMBO_BASE),
-            g_instance, nullptr);
         g_programmer.hBitDisplay =
             CreateWindowExW(0, L"BitDisplay", nullptr, WS_CHILD | WS_VISIBLE, 0,
                             0, 100, 100, hwnd, nullptr, g_instance, nullptr);
@@ -1485,10 +1400,6 @@ LRESULT CALLBACK calc_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(
                 g_programmer.hTypeCombo, CB_ADDSTRING, 0,
                 reinterpret_cast<LPARAM>(type_name(static_cast<DataType>(i))));
-        for (int i = 0; i <= idx(NumberBase::Bin); ++i)
-            SendMessageW(g_programmer.hBaseCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(
-                             base_name(static_cast<NumberBase>(i))));
         for (auto def : kButtons) {
             def.hwnd = CreateWindowExW(
                 0, L"BUTTON", def.text,
@@ -1504,13 +1415,10 @@ LRESULT CALLBACK calc_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_programmer.base = g_initial_config.base;
         SendMessageW(g_programmer.hTypeCombo, CB_SETCURSEL,
                      idx(g_programmer.type), 0);
-        SendMessageW(g_programmer.hBaseCombo, CB_SETCURSEL,
-                     idx(g_programmer.base), 0);
         if (g_mode == AppMode::Programmer)
             sync_programmer_from_basic();
         ShowWindow(g_programmer.hTypeCombo,
                    g_mode == AppMode::Programmer ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_programmer.hBaseCombo, SW_HIDE);
         ShowWindow(g_programmer.hBitDisplay,
                    g_mode == AppMode::Programmer ? SW_SHOW : SW_HIDE);
         apply_topmost_state();
@@ -1587,15 +1495,6 @@ LRESULT CALLBACK calc_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                             CB_GETCURSEL, 0, 0);
                 sel >= 0)
                 set_programmer_type(static_cast<DataType>(sel));
-            update_buttons_enabled();
-            return 0;
-        }
-        if (id == ID_COMBO_BASE && code == CBN_SELCHANGE) {
-            if (int sel = (int)SendMessageW(g_programmer.hBaseCombo,
-                                            CB_GETCURSEL, 0, 0);
-                sel >= 0)
-                set_programmer_base(static_cast<NumberBase>(sel));
-            update_menu_checks();
             update_buttons_enabled();
             return 0;
         }
